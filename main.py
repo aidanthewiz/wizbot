@@ -12,6 +12,7 @@ SABERTOOTH_ADDRESS = 128
 
 CONTROLLER_NAME = "8BitDo SN30 Pro+"
 ARDUINO_SERIAL_PORTS = ('/dev/ttyACM*', '/dev/ttyUSB*')
+NIGHT_MODE = True
 MAX_SPEED = 126
 
 # Properly Tuned
@@ -73,8 +74,14 @@ def send_packet(ser, address, command, value):
     checksum = (address + command + value) & 0x7F
     packet = bytes([address, command, value, checksum])
 
-    raspberry_pi_logger.info(f"Command ID: {command}, Motor Speed: {value}")
-    raspberry_pi_logger.debug(f"Sending packet: {packet}, Calculated Checksum: {checksum}")
+    if NIGHT_MODE and value > 20:
+        value = 20
+        packet = bytes([address, command, value, checksum])
+        raspberry_pi_logger.debug(f"NIGHT MODE")
+
+    if value != 0:
+        raspberry_pi_logger.debug(f"Command ID: {command}, Motor Speed: {value}")
+        raspberry_pi_logger.debug(f"Sending packet: {packet}, Calculated Checksum: {checksum}")
 
     try:
         ser.write(packet)
