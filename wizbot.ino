@@ -1,5 +1,5 @@
-#include <SoftwareSerial.h>
 #include <Sabertooth.h>
+#include <SoftwareSerial.h>
 
 #define SABERTOOTH_TX_PIN 11
 #define SABERTOOTH_ADDRESS 128

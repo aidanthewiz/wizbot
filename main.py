@@ -8,6 +8,18 @@ import serial
 from evdev import InputDevice, list_devices, ecodes
 from serial.serialutil import SerialException
 
+SABERTOOTH_ADDRESS = 128
+
+CONTROLLER_NAME = "8BitDo SN30 Pro+"
+ARDUINO_SERIAL_PORTS = ('/dev/ttyACM*', '/dev/ttyUSB*')
+MAX_SPEED = 126
+
+# Properly Tuned
+UPDATE_INTERVAL = 0.02
+DEAD_ZONE = 5
+
+prev_motor_speeds = [None, None]
+
 # Set up the logging formatter
 formatter = colorlog.ColoredFormatter(
     "%(asctime)s [%(levelname)s] [%(name)s] %(log_color)s%(message)s",
@@ -37,15 +49,6 @@ logging.getLogger().addHandler(handler)
 
 arduino_logger = logging.getLogger("Arduino")
 raspberry_pi_logger = logging.getLogger("RaspberryPi")
-
-SABERTOOTH_ADDRESS = 128
-DEAD_ZONE = 10
-CONTROLLER_NAME = "8BitDo SN30 Pro+"
-ARDUINO_SERIAL_PORTS = ('/dev/ttyACM*', '/dev/ttyUSB*')
-UPDATE_INTERVAL = 0.1
-MAX_SPEED = 25
-
-prev_motor_speeds = [None, None]
 
 
 def find_controller():
@@ -89,18 +92,30 @@ def handle_event(event, motor_speeds):
             if abs(motor_speed) < DEAD_ZONE:
                 motor_speed = 0
 
-            motor_speeds[0 if event.code == ecodes.ABS_RY else 1] = motor_speed
+            motor_speeds[0 if event.code == ecodes.ABS_Y else 1] = motor_speed
 
 
 def send_motor_speeds(ser, motor_speeds):
     for i, motor_speed in enumerate(motor_speeds):
         if motor_speed is not None:
-            command = 0 if motor_speed >= 0 else 1 if i == 0 else 5 if motor_speed >= 0 else 4
+            if i == 1:  # Right motor (ABS_RY)
+                command = 0 if motor_speed >= 0 else 1
+            else:  # Left motor (ABS_Y)
+                command = 5 if motor_speed >= 0 else 4
             success = send_packet(ser, SABERTOOTH_ADDRESS, command, abs(motor_speed))
 
             if not success:
                 return False
     return True
+
+
+def motor_speed_sender(ser, motor_speeds, stop_event):
+    while not stop_event.is_set():
+        if not all(speed is None for speed in motor_speeds):
+            success = send_motor_speeds(ser, motor_speeds)
+            if not success:
+                break
+        time.sleep(UPDATE_INTERVAL)
 
 
 def process_controller_events(controller, motor_speeds, stop_event):
@@ -114,14 +129,6 @@ def process_controller_events(controller, motor_speeds, stop_event):
                 break
             else:
                 raise
-
-
-def motor_speed_sender(ser, motor_speeds, stop_event):
-    while not stop_event.is_set():
-        success = send_motor_speeds(ser, motor_speeds)
-        if not success:
-            break
-        time.sleep(UPDATE_INTERVAL)
 
 
 def find_arduino_port():
