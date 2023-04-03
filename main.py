@@ -16,10 +16,9 @@ NIGHT_MODE = True
 MAX_SPEED = 126
 
 # Properly Tuned
-UPDATE_INTERVAL = 0.02
 DEAD_ZONE = 5
 
-prev_motor_speeds = [None, None]
+ready_received = False
 
 # Set up the logging formatter
 formatter = colorlog.ColoredFormatter(
@@ -45,7 +44,7 @@ formatter = colorlog.ColoredFormatter(
 # Set up the logging handlers to use the custom formatter
 handler = logging.StreamHandler()
 handler.setFormatter(formatter)
-logging.getLogger().setLevel(logging.INFO)
+logging.getLogger().setLevel(logging.DEBUG)
 logging.getLogger().addHandler(handler)
 
 arduino_logger = logging.getLogger("Arduino")
@@ -71,21 +70,27 @@ def ungrab_controller(controller):
 
 
 def send_packet(ser, address, command, value):
-    checksum = (address + command + value) & 0x7F
-    packet = bytes([address, command, value, checksum])
+    global ready_received
 
     if NIGHT_MODE and value > 20:
         value = 20
-        checksum = (address + command + value) & 0x7F
-        packet = bytes([address, command, value, checksum])
         raspberry_pi_logger.debug(f"NIGHT MODE")
+
+    checksum = (address + command + value) & 0x7F
+    packet = bytes([address, command, value, checksum])
 
     if value != 0:
         raspberry_pi_logger.debug(f"Command ID: {command}, Motor Speed: {value}")
         raspberry_pi_logger.debug(f"Sending packet: {packet}, Calculated Checksum: {checksum}")
 
     try:
+        while not ready_received:
+            time.sleep(0.01)
+
         ser.write(packet)
+        ser.flush()
+        ready_received = False
+
         return True
     except SerialException as e:
         raspberry_pi_logger.error(f"Error sending packet to Arduino: {e}")
@@ -123,7 +128,8 @@ def motor_speed_sender(ser, motor_speeds, stop_event):
             success = send_motor_speeds(ser, motor_speeds)
             if not success:
                 break
-        time.sleep(UPDATE_INTERVAL)
+        else:
+            time.sleep(0.01)
 
 
 def process_controller_events(controller, motor_speeds, stop_event):
@@ -150,18 +156,23 @@ def connect_arduino():
     arduino_port = find_arduino_port()
     if arduino_port:
         try:
-            return serial.Serial(arduino_port, 115200, timeout=1)
+            return serial.Serial(arduino_port, 115200, timeout=0.01)
         except serial.SerialException as e:
             raspberry_pi_logger.warning(f"Unable to connect to Arduino: {e}")
     return None
 
 
-def arduino_log_reader(ser):
+def arduino_serial_reader(ser):
+    global ready_received
+
     while ser.is_open:
         try:
             arduino_output = ser.readline().decode('utf-8').rstrip()
             if arduino_output:
-                arduino_logger.info(arduino_output)
+                if arduino_output == "R":
+                    ready_received = True
+                else:
+                    arduino_logger.info(arduino_output)
         except SerialException as e:
             raspberry_pi_logger.error(f"Error reading Arduino log: {e}")
             break
@@ -170,7 +181,7 @@ def arduino_log_reader(ser):
 def main():
     controller = None
     ser = None
-    motor_speeds = [None, None]
+    motor_speeds = [0, 0]
     stop_event = threading.Event()
 
     while True:
@@ -190,7 +201,7 @@ def main():
                 ser = connect_arduino()
                 if ser:
                     raspberry_pi_logger.info("Arduino connected")
-                    arduino_log_thread = threading.Thread(target=arduino_log_reader, args=(ser,))
+                    arduino_log_thread = threading.Thread(target=arduino_serial_reader, args=(ser,))
                     arduino_log_thread.daemon = True
                     arduino_log_thread.start()
 

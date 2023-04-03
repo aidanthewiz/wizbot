@@ -15,25 +15,30 @@ void setup() {
   while (!Serial) {
     delay(100);
   }
+
+  Serial.write('R');
 }
 
 void loop() {
+  // Check if there's incoming data
   if (Serial.available() >= 4) {
     byte address = Serial.read();
     byte command = Serial.read();
     byte value = Serial.read();
-    byte checksum = Serial.read();
+    byte received_checksum = Serial.read();
 
-    byte calculatedChecksum = (address + command + value) & 0x7F;
+    byte calculated_checksum = (address + command + value) & 0x7F;
 
     // Verify the checksum
-    if (calculatedChecksum == checksum) {
+    if (calculated_checksum == received_checksum) {
       ST.command(command, value);
     } else {
       Serial.print("Checksum error. Received Checksum: ");
-      Serial.print(checksum);
+      Serial.print(received_checksum);
       Serial.print(", Calculated Checksum: ");
-      Serial.println(calculatedChecksum);
+      Serial.println(calculated_checksum);
     }
+
+    Serial.write('R');
   }
 }

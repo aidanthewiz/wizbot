@@ -1,0 +1,15 @@
+[Unit]
+Description=wizbot
+After=multi-user.target
+
+[Service]
+Type=simple
+User=aidan
+Group=aidan
+Restart=always
+Environment=PYTHONUNBUFFERED=1
+WorkingDirectory=/home/aidan/wizbot/
+ExecStart=/usr/bin/python3 main.py
+
+[Install]
+WantedBy=multi-user.target
