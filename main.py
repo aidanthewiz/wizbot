@@ -76,6 +76,7 @@ def send_packet(ser, address, command, value):
 
     if NIGHT_MODE and value > 20:
         value = 20
+        checksum = (address + command + value) & 0x7F
         packet = bytes([address, command, value, checksum])
         raspberry_pi_logger.debug(f"NIGHT MODE")
 
