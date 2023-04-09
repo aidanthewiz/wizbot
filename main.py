@@ -11,14 +11,12 @@ from serial.serialutil import SerialException
 SABERTOOTH_ADDRESS = 128
 
 CONTROLLER_NAME = "8BitDo SN30 Pro+"
-ARDUINO_SERIAL_PORTS = ('/dev/ttyACM*', '/dev/ttyUSB*')
+SABERTOOTH_SERIAL_PORTS = ('/dev/ttyACM*', '/dev/ttyUSB*')
 NIGHT_MODE = True
 MAX_SPEED = 126
 
 # Properly Tuned
 DEAD_ZONE = 5
-
-ready_received = False
 
 # Set up the logging formatter
 formatter = colorlog.ColoredFormatter(
@@ -34,7 +32,7 @@ formatter = colorlog.ColoredFormatter(
     },
     secondary_log_colors={
         'message': {
-            'Arduino': 'white,bg_blue',
+            'Sabertooth': 'white,bg_blue',
             'RaspberryPi': 'white,bg_magenta',
         }
     },
@@ -47,7 +45,7 @@ handler.setFormatter(formatter)
 logging.getLogger().setLevel(logging.DEBUG)
 logging.getLogger().addHandler(handler)
 
-arduino_logger = logging.getLogger("Arduino")
+sabertooth_logger = logging.getLogger("Sabertooth")
 raspberry_pi_logger = logging.getLogger("RaspberryPi")
 
 
@@ -70,8 +68,6 @@ def ungrab_controller(controller):
 
 
 def send_packet(ser, address, command, value):
-    global ready_received
-
     if NIGHT_MODE and value > 20:
         value = 20
         raspberry_pi_logger.debug(f"NIGHT MODE")
@@ -84,16 +80,12 @@ def send_packet(ser, address, command, value):
         raspberry_pi_logger.debug(f"Sending packet: {packet}, Calculated Checksum: {checksum}")
 
     try:
-        while not ready_received:
-            time.sleep(0.01)
-
         ser.write(packet)
         ser.flush()
-        ready_received = False
 
         return True
     except SerialException as e:
-        raspberry_pi_logger.error(f"Error sending packet to Arduino: {e}")
+        raspberry_pi_logger.error(f"Error sending packet to Sabertooth: {e}")
         return False
 
 
@@ -145,36 +137,31 @@ def process_controller_events(controller, motor_speeds, stop_event):
                 raise
 
 
-def find_arduino_port():
-    arduino_ports = []
-    for port_pattern in ARDUINO_SERIAL_PORTS:
-        arduino_ports.extend(glob.glob(port_pattern))
-    return arduino_ports[0] if arduino_ports else None
+def find_sabertooth_port():
+    sabertooth_ports = []
+    for port_pattern in SABERTOOTH_SERIAL_PORTS:
+        sabertooth_ports.extend(glob.glob(port_pattern))
+    return sabertooth_ports[0] if sabertooth_ports else None
 
 
-def connect_arduino():
-    arduino_port = find_arduino_port()
-    if arduino_port:
+def connect_sabertooth():
+    sabertooth_port = find_sabertooth_port()
+    if sabertooth_port:
         try:
-            return serial.Serial(arduino_port, 115200, timeout=0.01)
+            return serial.Serial(sabertooth_port, 115200, timeout=0.01)
         except serial.SerialException as e:
-            raspberry_pi_logger.warning(f"Unable to connect to Arduino: {e}")
+            raspberry_pi_logger.warning(f"Unable to connect to Sabertooth: {e}")
     return None
 
 
-def arduino_serial_reader(ser):
-    global ready_received
-
+def sabertooth_serial_reader(ser):
     while ser.is_open:
         try:
-            arduino_output = ser.readline().decode('utf-8').rstrip()
-            if arduino_output:
-                if arduino_output == "R":
-                    ready_received = True
-                else:
-                    arduino_logger.info(arduino_output)
+            sabertooth_output = ser.readline().decode('utf-8').rstrip()
+            if sabertooth_output:
+                sabertooth_logger.info(sabertooth_output)
         except SerialException as e:
-            raspberry_pi_logger.error(f"Error reading Arduino log: {e}")
+            raspberry_pi_logger.error(f"Error reading Sabertooth log: {e}")
             break
 
 
@@ -198,19 +185,19 @@ def main():
                     continue
 
             if not ser:
-                ser = connect_arduino()
+                ser = connect_sabertooth()
                 if ser:
-                    raspberry_pi_logger.info("Arduino connected")
-                    arduino_log_thread = threading.Thread(target=arduino_serial_reader, args=(ser,))
-                    arduino_log_thread.daemon = True
-                    arduino_log_thread.start()
+                    raspberry_pi_logger.info("Sabertooth connected")
+                    sabertooth_log_thread = threading.Thread(target=sabertooth_serial_reader, args=(ser,))
+                    sabertooth_log_thread.daemon = True
+                    sabertooth_log_thread.start()
 
                     motor_speed_sender_thread = threading.Thread(target=motor_speed_sender,
                                                                  args=(ser, motor_speeds, stop_event))
                     motor_speed_sender_thread.daemon = True
                     motor_speed_sender_thread.start()
                 else:
-                    raspberry_pi_logger.warning("Arduino not found. Retrying in 5 seconds.")
+                    raspberry_pi_logger.warning("Sabertooth not found. Retrying in 5 seconds.")
                     time.sleep(5)
                     continue
 
@@ -237,7 +224,7 @@ def main():
             break
 
         except (OSError, serial.SerialException) as e:
-            raspberry_pi_logger.error(f"Error in communication with Arduino: {e}")
+            raspberry_pi_logger.error(f"Error in communication with Sabertooth: {e}")
             if ser:
                 ser.close()
                 ser = None
