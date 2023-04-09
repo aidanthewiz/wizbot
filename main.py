@@ -181,6 +181,7 @@ def process_controller_events(controller, motor_speeds, ser, stop_event, emergen
         except OSError as e:
             if e.errno == 19:
                 raspberry_pi_logger.warning("Controller disconnected.")
+                emergency_shutoff(ser, emergency_stop, motor_speeds)
                 break
             else:
                 raise
