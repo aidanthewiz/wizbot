@@ -72,13 +72,10 @@ def ungrab_controller(controller: InputDevice) -> None:
 
 def emergency_shutoff(ser: serial.Serial, emergency_stop: threading.Event, motor_speeds: List[int]) -> bool:
     emergency_stop.set()
-    motor_speeds[0] = motor_speeds[1] = 0  # Reset motor speeds to 0
-    for i in range(2):
-        command = 0 if i == 1 else 5  # Right motor (command 0) and left motor (command 5)
-        success = send_packet(ser, SABERTOOTH_ADDRESS, command, 0, emergency_stop)
-        if success:
-            return True
-    return False
+    motor_speeds[0] = motor_speeds[1] = 0
+    command0 = send_packet(ser, SABERTOOTH_ADDRESS, 0, 0, emergency_stop)
+    command5 = send_packet(ser, SABERTOOTH_ADDRESS, 5, 0, emergency_stop)
+    return command0 and command5
 
 
 def send_packet(ser: serial.Serial, address: int, command: int, value: int, emergency_stop: threading.Event) -> bool:
@@ -87,7 +84,11 @@ def send_packet(ser: serial.Serial, address: int, command: int, value: int, emer
         raspberry_pi_logger.debug(f"NIGHT MODE")
 
     checksum = (address + command + value) & 0x7F
-    packet = bytes([address, command, value, checksum])
+    packet = bytearray(4)
+    packet[0] = address
+    packet[1] = command
+    packet[2] = value
+    packet[3] = checksum
 
     if value != 0:
         raspberry_pi_logger.debug(f"Command ID: {command}, Motor Speed: {value}")
@@ -158,9 +159,9 @@ def send_motor_speeds(ser: serial.Serial, motor_speeds: List[int], emergency_sto
     return True
 
 
-def motor_speed_sender(ser: serial.Serial, motor_speeds: List[int], stop_event: threading.Event,
+def motor_speed_sender(ser: serial.Serial, motor_speeds: List[int], communication_stop: threading.Event,
                        emergency_stop: threading.Event) -> None:
-    while not stop_event.is_set():
+    while not communication_stop.is_set():
         if emergency_stop.is_set():
             motor_speeds[0] = motor_speeds[1] = 0  # Set motor speeds to 0
 
@@ -168,12 +169,12 @@ def motor_speed_sender(ser: serial.Serial, motor_speeds: List[int], stop_event: 
             success = send_motor_speeds(ser, motor_speeds, emergency_stop)
             if not success:
                 break
-        stop_event.wait(0.01)
+        communication_stop.wait(0.01)
 
 
 def process_controller_events(controller: InputDevice, motor_speeds: List[int], ser: serial.Serial,
-                              stop_event: threading.Event, emergency_stop: threading.Event) -> None:
-    while not stop_event.is_set():
+                              communication_stop: threading.Event, emergency_stop: threading.Event) -> None:
+    while not communication_stop.is_set():
         try:
             for event in controller.read_loop():
                 handle_event(event, motor_speeds, ser, emergency_stop)
@@ -203,8 +204,8 @@ def connect_sabertooth() -> Optional[serial.Serial]:
     return None
 
 
-def sabertooth_serial_reader(ser: serial.Serial, stop_event: threading.Event) -> None:
-    while not stop_event.is_set():
+def sabertooth_serial_reader(ser: serial.Serial, communication_stop: threading.Event) -> None:
+    while not communication_stop.is_set():
         try:
             sabertooth_output = ser.readline().decode('utf-8').rstrip()
             if sabertooth_output:
@@ -212,14 +213,14 @@ def sabertooth_serial_reader(ser: serial.Serial, stop_event: threading.Event) ->
         except SerialException as e:
             raspberry_pi_logger.error(f"Error reading Sabertooth log: {e}")
             break
-        stop_event.wait(0.01)
+        communication_stop.wait(0.01)
 
 
 def main() -> None:
     controller: Optional[InputDevice] = None
     ser: Optional[serial.Serial] = None
     motor_speeds = [0, 0]
-    stop_event = threading.Event()
+    communication_stop = threading.Event()
     emergency_stop = threading.Event()
 
     while True:
@@ -232,43 +233,47 @@ def main() -> None:
                     controller.grab()
                 else:
                     raspberry_pi_logger.warning("Controller not found. Retrying in 1 second.")
-                    stop_event.wait(1)
+                    communication_stop.wait(1)
                     continue
 
             if not ser:
                 ser = connect_sabertooth()
                 if ser:
                     raspberry_pi_logger.info("Sabertooth connected")
-                    sabertooth_log_thread = threading.Thread(target=sabertooth_serial_reader, args=(ser, stop_event))
+                    sabertooth_log_thread = threading.Thread(target=sabertooth_serial_reader,
+                                                             args=(ser, communication_stop))
                     sabertooth_log_thread.daemon = True
                     sabertooth_log_thread.start()
 
                     motor_speed_sender_thread = threading.Thread(target=motor_speed_sender,
-                                                                 args=(ser, motor_speeds, stop_event, emergency_stop))
+                                                                 args=(
+                                                                     ser, motor_speeds, communication_stop,
+                                                                     emergency_stop))
                     motor_speed_sender_thread.daemon = True
                     motor_speed_sender_thread.start()
                 else:
                     raspberry_pi_logger.warning("Sabertooth not found. Retrying in 1 second.")
-                    stop_event.wait(1)
+                    communication_stop.wait(1)
                     continue
 
             if controller and ser:
                 event_thread = threading.Thread(target=process_controller_events,
-                                                args=(controller, motor_speeds, ser, stop_event, emergency_stop))
+                                                args=(
+                                                    controller, motor_speeds, ser, communication_stop, emergency_stop))
                 event_thread.daemon = True
                 event_thread.start()
 
                 while event_thread.is_alive():
-                    stop_event.wait(0.01)
+                    communication_stop.wait(0.01)
             else:
-                stop_event.wait(0.01)
+                communication_stop.wait(0.01)
 
             ungrab_controller(controller)
             controller = None
 
         except KeyboardInterrupt:
             raspberry_pi_logger.warning("Exiting due to keyboard interrupt")
-            stop_event.set()
+            communication_stop.set()
             ungrab_controller(controller)
             if ser:
                 ser.close()
@@ -279,7 +284,7 @@ def main() -> None:
             if ser:
                 ser.close()
                 ser = None
-            stop_event.wait(5)
+            communication_stop.wait(5)
 
         except Exception as e:
             raspberry_pi_logger.error(f"Unhandled exception: {e}")
