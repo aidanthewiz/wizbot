@@ -1,3 +1,4 @@
+import configparser
 import glob
 import logging
 import threading
@@ -8,45 +9,52 @@ import serial
 from evdev import InputDevice, list_devices, ecodes
 from serial.serialutil import SerialException
 
-SABERTOOTH_ADDRESS = 128
+config = configparser.ConfigParser()
+config.read('config.ini')
 
-CONTROLLER_NAME = "8BitDo SN30 Pro+"
-SABERTOOTH_SERIAL_PORTS = ('/dev/ttyACM*', '/dev/ttyUSB*')
-NIGHT_MODE = True
-MAX_SPEED = 126
+CONTROLLER_NAME = config.get('Settings', 'CONTROLLER_NAME')
+SABERTOOTH_ADDRESS = config.getint('Settings', 'SABERTOOTH_ADDRESS')
+SABERTOOTH_SERIAL_PORTS = config.get('Settings', 'SABERTOOTH_SERIAL_PORTS').split(', ')
+NIGHT_MODE = config.getboolean('Settings', 'NIGHT_MODE')
+MAX_SPEED = config.getint('Settings', 'MAX_SPEED')
+DEAD_ZONE = config.getint('Settings', 'DEAD_ZONE')
 
-# Properly Tuned
-DEAD_ZONE = 5
 
-# Set up the logging formatter
-formatter = colorlog.ColoredFormatter(
-    "%(asctime)s [%(levelname)s] [%(name)s] %(log_color)s%(message)s",
-    datefmt=None,
-    reset=True,
-    log_colors={
-        'DEBUG': 'cyan',
-        'INFO': 'green',
-        'WARNING': 'yellow',
-        'ERROR': 'red',
-        'CRITICAL': 'red,bg_white',
-    },
-    secondary_log_colors={
-        'message': {
-            'Sabertooth': 'white,bg_blue',
-            'RaspberryPi': 'white,bg_magenta',
-        }
-    },
-    style='%'
-)
+def init_logger():
+    formatter = colorlog.ColoredFormatter(
+        "%(asctime)s [%(levelname)s] [%(name)s] %(log_color)s%(message)s",
+        datefmt=None,
+        reset=True,
+        log_colors={
+            'DEBUG': 'cyan',
+            'INFO': 'green',
+            'WARNING': 'yellow',
+            'ERROR': 'red',
+            'CRITICAL': 'red,bg_white',
+        },
+        secondary_log_colors={
+            'message': {
+                'Sabertooth': 'white,bg_blue',
+                'RaspberryPi': 'white,bg_magenta',
+            }
+        },
+        style='%'
+    )
 
-# Set up the logging handlers to use the custom formatter
-handler = logging.StreamHandler()
-handler.setFormatter(formatter)
-logging.getLogger().setLevel(logging.DEBUG)
-logging.getLogger().addHandler(handler)
+    handler = logging.StreamHandler()
+    handler.setFormatter(formatter)
+    logging.getLogger().setLevel(logging.DEBUG)
+    logging.getLogger().addHandler(handler)
 
-sabertooth_logger = logging.getLogger("Sabertooth")
-raspberry_pi_logger = logging.getLogger("RaspberryPi")
+    return {
+        'sabertooth': logging.getLogger("Sabertooth"),
+        'raspberry_pi': logging.getLogger("RaspberryPi")
+    }
+
+
+loggers = init_logger()
+sabertooth_logger = loggers['sabertooth']
+raspberry_pi_logger = loggers['raspberry_pi']
 
 
 def find_controller():
