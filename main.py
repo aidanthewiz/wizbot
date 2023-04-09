@@ -116,12 +116,12 @@ def handle_event(event: InputEvent, motor_speeds: List[int], ser: serial.Serial,
 
     if event.type == ecodes.EV_ABS:
         if event.code in (ecodes.ABS_Y, ecodes.ABS_RY):
-            motor_speed = int(((event.value - 32767) / 32767) * 126)
+            joystick_speed = int(((event.value - 32767) / 32767) * 126)
 
-            if abs(motor_speed) < DEAD_ZONE:
-                motor_speed = 0
+            if abs(joystick_speed) < DEAD_ZONE:
+                joystick_speed = 0
 
-            motor_speeds[0 if event.code == ecodes.ABS_Y else 1] = motor_speed
+            motor_speeds[0 if event.code == ecodes.ABS_Y else 1] = joystick_speed
 
     # Add handling for other event types and codes
     elif event.type == ecodes.EV_SYN:
@@ -146,29 +146,37 @@ def handle_event(event: InputEvent, motor_speeds: List[int], ser: serial.Serial,
 
 
 def send_motor_speeds(ser: serial.Serial, motor_speeds: List[int], emergency_stop: threading.Event) -> bool:
-    for i, motor_speed in enumerate(motor_speeds):
-        if motor_speed is not None:
-            if i == 1:  # Right motor (ABS_RY)
-                command = 0 if motor_speed >= 0 else 1
-            else:  # Left motor (ABS_Y)
-                command = 5 if motor_speed >= 0 else 4
-            success = send_packet(ser, SABERTOOTH_ADDRESS, command, abs(motor_speed), emergency_stop)
+    right_motor_speed, left_motor_speed = motor_speeds
 
-            if not success:
-                return False
-    return True
+    right_motor_command = 1 if right_motor_speed >= 0 else 0
+    left_motor_command = 4 if left_motor_speed >= 0 else 5
+    right_motor_speed = abs(right_motor_speed)
+    left_motor_speed = abs(left_motor_speed)
+
+    success1 = send_packet(ser, SABERTOOTH_ADDRESS, right_motor_command, right_motor_speed, emergency_stop)
+    success2 = send_packet(ser, SABERTOOTH_ADDRESS, left_motor_command, left_motor_speed, emergency_stop)
+
+    if success1 and success2:
+        return True
+    else:
+        return False
 
 
 def motor_speed_sender(ser: serial.Serial, motor_speeds: List[int], communication_stop: threading.Event,
                        emergency_stop: threading.Event) -> None:
     while not communication_stop.is_set():
-        if emergency_stop.is_set():
-            motor_speeds[0] = motor_speeds[1] = 0  # Set motor speeds to 0
+        if motor_speeds[0] is None:
+            motor_speeds[0] = 0
+        if motor_speeds[1] is None:
+            motor_speeds[1] = 0
 
-        if any(speed is not None for speed in motor_speeds):
-            success = send_motor_speeds(ser, motor_speeds, emergency_stop)
-            if not success:
-                break
+        if emergency_stop.is_set():
+            motor_speeds[0] = motor_speeds[1] = 0
+
+        success = send_motor_speeds(ser, motor_speeds, emergency_stop)
+        if not success:
+            break
+
         communication_stop.wait(0.01)
 
 
